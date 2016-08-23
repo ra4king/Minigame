@@ -1,0 +1,375 @@
+<html>
+    <head>
+        <title>MiniGame</title>
+        <style type="text/css">
+            body { margin: 0; padding: 0; }
+            canvas { border: 1px solid black; display: block; width: 800; height: 600; margin-right: auto; margin-left: auto; }
+        </style>
+    </head>
+
+    <body>
+        <canvas id="canvas"></canvas>
+    </body>
+
+    <script>
+        var PLAYER_RADIUS = 15;
+        var BULLET_RADIUS = 5;
+        var POWERUP_RADIUS = 5;
+
+        var MAX_HEALTH = 50;
+
+        var POWERUP_SHOOT_FASTER = 1;
+        var POWERUP_SHOOT_FASTER_TIME = 5 * 1000;
+
+        var canvas = document.getElementById('canvas');
+        canvas.width = 800;
+        canvas.height = 600;
+
+        var lastPingAvg = 0, ping = 0, pingCount = 0, lastPingAvgReset = 0;
+        var lastPingTime = Date.now();
+
+        var player = {};
+
+        var playersOld = [];
+        var playersCur = [];
+        var playersCurTimestamp = 0;
+
+        var bulletsOld = null;
+        var bulletsCur = { timestamp: 0, bullets: [] };
+
+        var powerups = [];
+
+        function loader(resourceCount, all_loaded) {
+            var count = 0;
+            return function() {
+                if(++count === resourceCount) {
+                    all_loaded();
+                }
+            }
+        }
+
+        var socket = null;
+
+        var resLoaded = loader(2, function() {
+            while(!player.name || player.name.length > 20) {
+                player.name = prompt('Enter name:');
+            }
+            s.send(JSON.stringify({ name: player.name }));
+            setInterval(gameloop, 16);
+        });
+
+        var playerImg = new Image();
+        playerImg.src = 'player.png';
+        playerImg.addEventListener('load', resLoaded);
+
+        var s = new WebSocket('wss://www.roiatalla.com/minigame');
+        s.onopen = function() {
+            socket = s;
+            resLoaded();
+        };
+        s.onerror = function(err) {
+            console.log('websocket error: ' + String(err.data));
+            socket = null;
+        };
+        s.onclose = function(err) {
+            console.log('websocket closed.');
+            socket = null;
+        };
+        s.onmessage = function(msg) {
+            var data = JSON.parse(msg.data);
+
+            if(data.pingMsg == lastPingTime) {
+                var now = Date.now();
+
+                if(now - lastPingAvgReset >= 1000) {
+                    lastPingAvg = Math.round(ping / (pingCount ? pingCount : 1));
+
+                    lastPingAvgReset = now;
+                    ping = 0;
+                    pingCount = 0;
+                }
+
+                ping += now - lastPingTime;
+                pingCount++;
+                lastPingTime = null;
+            }
+
+            if(data.self) {
+                player = Object.assign(player, data.self);
+            }
+
+            playersCur.forEach(function(val, idx) {
+                var other = data.others[idx];
+                if(!val || !other || val.id !== other.id || val.timestamp !== other.timestamp) {
+                    playersOld[idx] = val;
+                }
+            });
+            playersCur = data.others;
+            playersCurTimestamp = Date.now();
+
+            bulletsOld = bulletsCur;
+            bulletsCur = {
+                timestamp: Date.now(),
+                bullets: data.bullets
+            };
+
+            powerups = data.powerups;
+        };
+
+        var isRightPressed = false;
+        var isLeftPressed = false;
+        var isUpPressed = false;
+        var isDownPressed = false;
+        var isLeftClickDown = false;
+        var isRightClickDown = false;
+        var lastMouseEvent = false;
+
+        var ctx = canvas.getContext('2d');
+        ctx.fillCircle = function(centerX, centerY, radius) {
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2*Math.PI);
+            ctx.fill();
+        }
+
+        function gameloop() {
+            ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+            if(player.x === undefined) {
+                return;
+            }
+
+            var speed = 3;
+            if(isLeftPressed) {
+                player.x -= speed;
+
+                if(player.x < PLAYER_RADIUS)
+                    player.x = PLAYER_RADIUS;
+            }
+            if(isRightPressed) {
+                player.x += speed;
+
+                if(player.x > canvas.width - PLAYER_RADIUS)
+                    player.x = canvas.width - PLAYER_RADIUS;
+            }
+            if(isDownPressed) {
+                player.y += speed;
+
+                if(player.y > canvas.height - PLAYER_RADIUS)
+                    player.y = canvas.height - PLAYER_RADIUS;
+            }
+            if(isUpPressed) {
+                player.y -= speed;
+
+                if(player.y < PLAYER_RADIUS)
+                    player.y = PLAYER_RADIUS;
+            }
+
+            function calc_angle(from, to) {
+                return Math.atan2(to.y - from.y, to.x - from.x)
+            }
+
+            if(socket) {
+                try {
+                    socket.send(JSON.stringify({
+                        pingMsg: lastPingTime ? lastPingTime : lastPingTime = Date.now(),
+                        ping: lastPingAvg,
+                        player: player,
+                        aiming: lastMouseEvent,
+                        shooting: isLeftClickDown || isRightClickDown,
+                    }));
+                } catch(e) {
+                    console.error('error sending message: ' + e);
+                    socket = null;
+                }
+            }
+
+            function drawPlayer(centerPos, angle) {
+                ctx.save();
+
+                ctx.translate(centerPos.x , centerPos.y);
+                ctx.rotate(angle ? angle : 0);
+                ctx.translate(-playerImg.width / 2 + 5, -playerImg.height / 2)
+
+                ctx.drawImage(playerImg, 0, 0);
+
+                ctx.restore();
+            }
+
+            ctx.textAlign = 'center';
+
+            var angleAiming = calc_angle(player, lastMouseEvent);
+
+            var offset = 25, angleOff = Math.PI / 4;
+            ctx.fillText('You', player.x, player.y - PLAYER_RADIUS - 5);
+            drawPlayer(player, calc_angle({x: player.x + offset * Math.cos(angleAiming + angleOff), y: player.y + offset * Math.sin(angleAiming + angleOff)}, lastMouseEvent));
+            ctx.fillRect(player.x - PLAYER_RADIUS, player.y + PLAYER_RADIUS + 3, 2 * PLAYER_RADIUS * (player.health / MAX_HEALTH), 3);
+
+            function interpolate(oldpos, curpos, oldtime, curtime) {
+                if(oldpos.respawned || curpos.respawned) {
+                    //console.log('player ' + curpos.id + ' respawned! ' + curpos.x + ', ' + curpos.y);
+                    return curpos;
+                }
+
+                if(oldpos.id !== curpos.id || curtime === oldtime)
+                    return curpos;
+
+                var xdiff = curpos.x - oldpos.x;
+                var ydiff = curpos.y - oldpos.y;
+                var dist = Math.sqrt(xdiff * xdiff + ydiff * ydiff);
+                var timediff = Date.now() - playersCurTimestamp;
+                var delta = (timediff * dist) / (curtime - oldtime);
+
+                var angle = Math.atan2(ydiff, xdiff);
+                return { /*delta: delta, olddiff: curtime - oldtime, timediff: timediff, dist: dist,*/ x: curpos.x + delta * Math.cos(angle), y: curpos.y + delta * Math.sin(angle) };
+            }
+
+            ctx.fillStyle = 'red';
+
+            for(var i = 0; i < playersCur.length; i++) {
+                var pos = null;
+
+                if(!playersOld[i]) {
+                    pos = playersCur[i];
+                } else {
+                    var oldpos = playersOld[i];
+                    var curpos = playersCur[i];
+                    var oldtime = playersOld[i].timestamp;
+                    var curtime = playersCur[i].timestamp;
+
+                    pos = interpolate(oldpos, curpos, oldtime, curtime);
+                }
+
+                // if(pos.x != playersCur[i].x || pos.y != playersCur[i].y) {
+                //     console.log(i + ' (' + playersCur[i].x + ', ' + playersCur[i].y + ') -> (' + pos.x + ', ' + pos.y + ') olddiff: '
+                //         + pos.olddiff + ' nowdiff: ' + pos.timediff + ' delta: ' + pos.delta + ' dist: ' + pos.dist);
+                // }
+
+                ctx.fillText(playersCur[i].name, pos.x, pos.y - PLAYER_RADIUS - 5);
+                drawPlayer(pos, playersCur[i].angle);
+                ctx.fillRect(pos.x - PLAYER_RADIUS, pos.y + PLAYER_RADIUS + 3, 2 * PLAYER_RADIUS * (playersCur[i].health / MAX_HEALTH), 3);
+            }
+
+            ctx.fillStyle = 'blue';
+
+            for(var i = 0; i < bulletsCur.bullets.length; i++) {
+                var pos = null;
+
+                if(!bulletsOld || !bulletsOld.bullets[i]) {
+                    pos = bulletsCur.bullets[i];
+                } else {
+                    var oldpos = bulletsOld.bullets[i];
+                    var curpos = bulletsCur.bullets[i];
+                    var oldtime = bulletsOld.timestamp;
+                    var curtime = bulletsCur.timestamp;
+
+                    pos = interpolate(oldpos, curpos, oldtime, curtime);
+                }
+
+                ctx.fillCircle(pos.x, pos.y, BULLET_RADIUS);
+            }
+
+            ctx.fillStyle = 'orange';
+
+            for(var i = 0; i < powerups.length; i++) {
+                ctx.fillCircle(powerups[i].x, powerups[i].y, POWERUP_RADIUS);
+            }
+
+            ctx.fillStyle = 'black';
+
+            if(lastMouseEvent) {
+                ctx.fillCircle(lastMouseEvent.x, lastMouseEvent.y, 3);
+            }
+
+            ctx.textAlign = 'left';
+            ctx.fillText('Ping: ' + lastPingAvg + ' ms', 5, 10);
+
+            ctx.textAlign = 'right';
+            ctx.fillText(player.score, canvas.width - 5, 10);
+            ctx.fillText('You (' + player.name +')', canvas.width - 25, 10);
+
+            for(var i = 0; i < playersCur.length; i++) {
+                ctx.fillText(String(playersCur[i].score), canvas.width - 5, 25 + 15 * i);
+                ctx.fillText(String(playersCur[i].name), canvas.width - 25, 25 + 15 * i);
+            }
+        }
+
+        document.addEventListener('keydown', function(event) {
+            switch(event.keyCode) {
+                case 65: // a
+                    isLeftPressed = true;
+                    break;
+                case 87: // w
+                    isUpPressed = true;
+                    break;
+                case 68: // d
+                    isRightPressed = true;
+                    break;
+                case 83: // s
+                    isDownPressed = true;
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', function(event) {
+            switch(event.keyCode) {
+                case 65: // a
+                    isLeftPressed = false;
+                    break;
+                case 87: // w
+                    isUpPressed = false;
+                    break;
+                case 68: // d
+                    isRightPressed = false;
+                    break;
+                case 83: // s
+                    isDownPressed = false;
+                    break;
+            }
+        });
+
+        canvas.addEventListener('mousedown', function(event) {
+            switch(event.button) {
+                case 0:
+                    isLeftClickDown = true;
+                    break;
+                case 2:
+                    isRightClickDown = true;
+                    break;
+            }
+
+            lastMouseEvent = {
+                x: event.offsetX,
+                y: event.offsetY
+            };
+
+            return false;
+        });
+
+        canvas.addEventListener('mouseup', function(event) {
+            switch(event.button) {
+                case 0:
+                    isLeftClickDown = false;
+                    break;
+                case 2:
+                    isRightClickDown = false;
+                    break;
+            }
+
+            lastMouseEvent = {
+                x: event.offsetX,
+                y: event.offsetY
+            };
+        });
+
+        canvas.addEventListener('mousemove', function(event) {
+            lastMouseEvent = {
+                x: event.offsetX,
+                y: event.offsetY
+            };
+        });
+
+        canvas.addEventListener('contextmenu', function (event) {
+            event.preventDefault();
+        });
+    </script>
+</html>
