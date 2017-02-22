@@ -369,10 +369,7 @@
         canvas.addEventListener('touchstart',function(event){
           if(event.touches) {
               aim = event.touches[0];
-              move = event.touches[1];
           }
-          if(move)
-              touchMovement(move);
           if(aim) {
               isLeftClickDown = isRightClickDown = true;
               lastMouseEvent = {
@@ -387,10 +384,7 @@
           if(event.touches) {
             console.log(event.touches);
               aim = event.touches[0];
-              move = event.touches[1];
           }
-          if(move)
-              touchMovement(move);
           if(aim){
               isLeftClickDown = isRightClickDown = true;
               lastMouseEvent = {
@@ -404,9 +398,8 @@
         canvas.addEventListener('touchend',function(event){
           if(event.touches) {
               aim = event.touches[0];
-              move = event.touches[1];
           }
-          isLeftClickDown = isRightClickDown = isLeftPressed = isUpPressed = isRightPressed =   isDownPressed = false;
+          isLeftClickDown = isRightClickDown = false;
           if(aim) {
               lastMouseEvent = {
                     x: aim.pageX,
@@ -415,6 +408,38 @@
           }
           return false;
         },false);
+        if (window.DeviceOrientationEvent)
+        {
+          window.addEventListener("deviceorientation", function (event)
+          {
+              tolerance = 5;
+              tiltoffset = 30;
+              if(event.gamma > tolerance + tiltoffset) {
+                  isLeftPressed = false;
+                  isRightPressed = true;
+                }
+              else if(event.gamma < -tolerance + tiltoffset) {
+                  isRightPressed = false;
+                  isLeftPressed = true;
+              }
+              else {
+                  isLeftPressed = false;
+                  isRightPressed = false;
+              }
+              if(event.beta > tolerance) {
+                  isUpPressed = false;
+                  isDownPressed = true;
+                }
+              else if(event.beta < -tolerance) {
+                  isDownPressed = false;
+                  isUpPressed = true;
+                }
+              else {
+                  isUpPressed = false;
+                  isDownPressed = false;
+              }
+          }, true);
+        }
 
         canvas.addEventListener('mouseup', function(event) {
             switch(event.button) {
